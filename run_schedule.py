@@ -3,9 +3,10 @@ from datetime import datetime
 from datetime import timedelta
 
 def round_to_next_hour(date):
-    new_date = date + timedelta(seconds=60-date.second, minutes=60-date.second)
+    date += timedelta(seconds=60-date.second)
+    date += timedelta(minutes=60-date.minute)
     #new_date = date + timedelta(minutes=60-date.minute)
-    return new_date
+    return date
 
 def time_str(date):
     return '{:%H:%M:%S %d/%m/%Y}'.format(date)
