@@ -1,11 +1,11 @@
 from moviepy.editor import *
 from pytube import YouTube
-import os, urllib, urllib2, random
+import os, urllib, urllib3, random
 from bs4 import BeautifulSoup
 from twython import Twython
+import imageio.plugins.ffmpeg
 
-
-# DELETE OLD VIDEO 
+# DELETE OLD VIDEO
 
 try:
     os.remove('input.mp4')
@@ -22,32 +22,64 @@ try:
 except OSError:
     pass
 
+try:
+    os.remove('final.mp4')
+except OSError:
+    pass
 
+creds = open('creds.txt', 'r').readlines()
+APP_KEY = ''
+APP_SECRET = ''
+ACCESS_KEY = ''
+ACCESS_SECRET = ''
+
+for s in creds:
+    if s.startswith('APP_KEY='):
+        APP_KEY = s.split('=')[1].rstrip()
+    elif s.startswith('APP_SECRET='):
+        APP_SECRET = s.split('=')[1].rstrip()
+    elif s.startswith('ACCESS_KEY='):
+        ACCESS_KEY = s.split('=')[1].rstrip()
+    elif s.startswith('ACCESS_SECRET='):
+        ACCESS_SECRET = s.split('=')[1].rstrip()
+
+print("Accessing Twitter with the following app key, app secret, access key, and access secret, respectively:")
+print(APP_KEY)
+print(APP_SECRET)
+print(ACCESS_KEY)
+print(ACCESS_SECRET)
+
+exclusions = []
+for f in open('exclude.txt', 'r').readlines():
+    exclusions.append(f.rstrip())
 
 # SEARCH YOUTUBE
+videoChoice = ''
 
 def youTubeSearch():
+    # choose a random dictionary word to search
+    word_file = "words.txt"
+    WORDS = open(word_file).read().splitlines()
+    videoSearch = random.choice(WORDS);
 
-	# choose a random dictionary word to search
-	word_file = "/usr/share/dict/words"
-	WORDS = open(word_file).read().splitlines()
-	videoSearch = random.choice(WORDS);
+    # search for, and randomly select YouTube videos in search
+    print("SEARCHING: " + videoSearch + "\n")
+    videos = []
+    query = urllib.parse.quote(videoSearch)
+    exclude = ('+-' + '+-'.join(exclusions)) if len(exclusions) > 0 else ''
+    url = "https://www.youtube.com/results?search_query=" + query + exclude
+    print(url)
+    response = urllib.request.urlopen(url)
+    html = response.read()
+    soup = BeautifulSoup(html)
+    for vid in soup.findAll(attrs={'class': 'yt-uix-tile-link'}):
+        videos.append('https://www.youtube.com' + vid['href'])
+    videos.pop(0)
+    videos = [i for i in videos if not ("channel" in i)]  # don't want channels
+    videoChoice = random.choice(videos)
+    print("YOUTUBE SEARCH: Downloading " + videoChoice + "\n")
+    return videoChoice
 
-	# search for, and randomly select YouTube videos in search
-	print "SEARCHING: "+videoSearch+"\n"
-	videos = []
-	query = urllib.quote(videoSearch)
-	url = "https://www.youtube.com/results?search_query=" + query + "+-music+-game+-math" # music/game/math gives us uninteresting videos, remove from search. (still tweaking this)
-	response = urllib2.urlopen(url)
-	html = response.read()
-	soup = BeautifulSoup(html)
-	for vid in soup.findAll(attrs={'class':'yt-uix-tile-link'}):
-	    videos.append('https://www.youtube.com' + vid['href'])
-	videos.pop(0)
-	videos = [i for i in videos if not ("channel" in i)] # don't want channels
-	videoChoice = random.choice(videos)
-	print "YOUTUBE SEARCH: Downloading "+videoChoice+"\n"
-	return videoChoice
 
 # Try to download a clip
 i = 0
@@ -58,45 +90,34 @@ while yt is None:
     try:
         yt = YouTube(videoChoice)
     except:
-		print "YOUTUBE SEARCH: Trying again..."
-		i = i+1
-		if i > 5:
-			print "YOUTUBE SEARCH: Trying something else... \n"
-			videoChoice = youTubeSearch()
-			i = 0
-		pass
-
+        print("YOUTUBE SEARCH: Trying again...")
+        i = i + 1
+        if i > 5:
+            print("YOUTUBE SEARCH: Trying something else... \n")
+            videoChoice = youTubeSearch()
+            i = 0
+        pass
 
 # Choose the lowest quality we can find & download
-quality = str(yt.filter('mp4')[-1])
-
-if "360p" in quality:
-	print "YOUTUBE: Choosing 360p \n"
-	yt.set_filename('input_early')
-	video = yt.get('mp4','360p')
-	video.download('')
-
-elif "720p" in quality: 
-	print "YOUTUBE: Choosing 720p \n"
-	yt.set_filename('input_early')
-	video = yt.get('mp4','720p')
-	video.download('')
-
-
-
+# quality = str(yt.filter('mp4')[-1])
+video = yt.streams.filter(progressive=True, file_extension='mp4', res='360p').first().download(filename='input_early')
+print("YOUTUBE: Choosing 360p \n")
 
 # EDIT VIDEO
 
-clipArea = int(VideoFileClip("input_early.mp4").duration/2) # pick from the middle of the video
+clipArea = int(VideoFileClip("input_early.mp4").duration / 2)  # pick from the middle of the video
 
 # clip to 5 sec
-command = "ffmpeg-3.2-64bit-static/ffmpeg -i input_early.mp4 -ss "+str(clipArea)+" -t 5 input_2.mp4"
-print "FFMPEG: Clipping down to 5 sec \n"
+ffmpeg_path = imageio.plugins.ffmpeg.get_exe()
+print('ffmpeg found at ' + ffmpeg_path)
+
+command = ffmpeg_path+" -i input_early.mp4 -ss " + str(clipArea) + " -t 5 input_2.mp4"
+print("FFMPEG: Clipping down to 5 sec \n")
 os.system(command)
 
 # convert to 360p (easier to manage)
-command2 = "ffmpeg-3.2-64bit-static/ffmpeg -i input_2.mp4 -vf scale=-2:360 input.mp4"
-print "FFMPEG: Resizing to 360p \n"
+command2 = ffmpeg_path+" -i input_2.mp4 -vf scale=-2:360 input.mp4"
+print("FFMPEG: Resizing to 360p \n")
 os.system(command2)
 
 # pull it in for manipulation
@@ -104,41 +125,44 @@ clip = VideoFileClip("input.mp4")
 
 # add in our audio clip
 audioclip = AudioFileClip("recordscratch_vo.wav")
-comp = concatenate_audioclips([clip.audio,audioclip])
-
+comp = concatenate_audioclips([clip.audio, audioclip])
 
 # make that freeze frame
-endtime = clip.duration - 0.1 # the videos ffmpeg exports aren't always exact in time, this ensures we get a freeze frame as close to the end as possible
+endtime = clip.duration - 0.1  # the videos ffmpeg exports aren't always exact in time, this ensures we get a freeze frame as close to the end as possible
 freezeframe = clip.to_ImageClip(t=endtime)
-screensize = VideoFileClip("input.mp4").size
-freezeclip = (freezeframe
-            .resize(height=screensize[1]*4)
-            .resize(lambda t : 1+0.02*t)
-            .set_position(('center', 'center'))
-            .set_duration(8)
-            )
+screensize = clip.size
+freezeclip = freezeframe.resize(height=screensize[1] * 4).resize(lambda t: 1 + 0.01 * t).set_position(
+    ('center', 'center')).set_duration(8)
 freezeclip = CompositeVideoClip([freezeclip]).resize(width=screensize[0])
-freezevid = CompositeVideoClip([freezeclip.set_position(('center', 'center'))], 
-                         size=screensize)
+freezevid = CompositeVideoClip([freezeclip.set_position(('center', 'center'))], size=screensize)\
 
+while clip.reader.proc.poll() is not None:
+    print('b')
+while audioclip.reader.proc.poll() is not None:
+    print('a')
 
 # combine and export video
-final_clip = concatenate_videoclips([clip,freezevid]).set_duration(13).set_audio(comp)
-final_clip.write_videofile("final.mp4",audio_codec='aac')
+try:
+    final_clip = concatenate_videoclips([clip, freezevid]).set_duration(13).set_audio(comp)
+    final_clip.write_videofile("final.mp4", audio_codec='aac')
+except Exception as e:
+    pass
+finally:
+    # cleaning up
+    clip.reader.close()
+    audioclip.reader.close_proc()
 
+clip.reader.close()
+audioclip.reader.close_proc()
 
 # TWEET IT
-
-APP_KEY = ''
-APP_SECRET = ''
-ACCESS_KEY = ''
-ACCESS_SECRET = ''
-
+print('Sending tweet!')
 twitter = Twython(APP_KEY, APP_SECRET, ACCESS_KEY, ACCESS_SECRET)
 
-tweetCopy = ["*record scratch*","*freeze frame*","Yup, that's me.","You're probably wondering how I ended up in this situation."]
- 
+tweetCopy = ["*record scratch*\n*freeze frame*\nYup, that's me. You're probably wondering how I ended up in this situation."]
+
 video = open('final.mp4', 'rb')
 response = twitter.upload_video(media=video, media_type='video/mp4')
-twitter.update_status(status=random.choice(tweetCopy), media_ids=[response['media_id']])
 
+tweet = twitter.update_status(status=random.choice(tweetCopy), media_ids=[response['media_id']])
+twitter.update_status(status=('@' + tweet['user']['screen_name'] + ' SOURCE VIDEO: ' + videoChoice), in_reply_to_status_id=tweet['id'])
